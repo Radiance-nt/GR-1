@@ -26,6 +26,7 @@ import os
 from typing import Any, Dict, Tuple, Union
 
 import gym
+import gymnasium
 import numpy as np
 import torch
 
@@ -120,3 +121,18 @@ class CalvinEnvWrapperRaw(gym.Wrapper):
         obs = self.env.get_obs()
         # return self.transform_observation(obs)
         return obs # use raw observation
+
+
+
+class CalvinEnvWrapperRawGymnasium(gymnasium.Wrapper):
+    def __init__(self, *args, **kwargs):
+        env = CalvinEnvWrapperRaw(*args, **kwargs)
+        super().__init__(env)
+
+    def reset(self, *args, **kwargs):
+        obs = self.env.reset(*args, **kwargs)
+        return obs, self.env.get_info()
+
+    def step(self, *args, **kwargs):
+        obs, reward, done, info = self.env.step(*args, **kwargs)
+        return obs, reward, done, False, info

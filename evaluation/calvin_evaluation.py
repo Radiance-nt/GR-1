@@ -27,6 +27,24 @@ from models.gr1 import GR1
 from calvin_agent.models.calvin_base_model import CalvinBaseModel
 
 
+class DummyCalvinEvaluation(CalvinBaseModel):
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def reset(self):
+        pass
+
+    def step(self, obs, goal):
+        B = len(obs)
+        act_min_bound = [-0.432188, -0.545456, 0.293439, -3.141593, -0.811348, -3.141573, -1.]
+        act_max_bound = [0.42977, 0.139396, 0.796262, 3.141592, 0.638583, 3.141551, 1.]
+        act_min_bound = torch.tensor(act_min_bound)
+        act_max_bound = torch.tensor(act_max_bound)
+        random_actions = act_min_bound + (act_max_bound - act_min_bound) * torch.rand(7)
+        expanded_random_actions = random_actions.expand(B, -1)  # Expand to the batch size B
+        return expanded_random_actions
+
+
 class GR1CalvinEvaluation(CalvinBaseModel):
     def __init__(self,
                  mae_ckpt,
@@ -57,8 +75,8 @@ class GR1CalvinEvaluation(CalvinBaseModel):
         # MAE
         model_mae = vits.__dict__['vit_base'](patch_size=16, num_classes=0)
         model_mae.to(self.device)
-        checkpoint = torch.load(mae_ckpt, map_location='cpu')
-        model_mae.load_state_dict(checkpoint['model'], strict=False)
+        # checkpoint = torch.load(mae_ckpt, map_location='cpu')
+        # model_mae.load_state_dict(checkpoint['model'], strict=False)
 
         # Resampler hparams
         resampler_params = dict()
@@ -91,10 +109,10 @@ class GR1CalvinEvaluation(CalvinBaseModel):
             n_positions=variant['n_positions'],
             resid_pdrop=variant['dropout'],
             attn_pdrop=variant['dropout'])
-        print(f"loading state dict: {policy_ckpt}...")
-        payload = torch.load(policy_ckpt)
-        state_dict = payload['state_dict']
-        msg = self.policy.load_state_dict(state_dict, strict=False)
+        # print(f"loading state dict: {policy_ckpt}...")
+        # payload = torch.load(policy_ckpt)
+        # state_dict = payload['state_dict']
+        # msg = self.policy.load_state_dict(state_dict, strict=False)
         self.policy.to(self.device)
         self.policy.eval()
 
