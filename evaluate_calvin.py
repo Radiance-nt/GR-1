@@ -68,11 +68,11 @@ EP_LEN = 360
 NUM_SEQUENCES = 1000
 
 
-def make_env(dataset_path, observation_space, device_id):
+def make_env(dataset_path, observation_space, device_id, env_idx=-1):
     val_folder = Path(dataset_path) / "validation"
     from evaluation.calvin_env_wrapper_raw import CalvinEnvWrapperRaw
     device = torch.device('cuda', device_id)
-    env = CalvinEnvWrapperRawGymnasium(val_folder, observation_space, device)
+    env = CalvinEnvWrapperRawGymnasium(val_folder, observation_space, device, env_idx=env_idx)
     return env
 
 
@@ -88,10 +88,27 @@ def evaluate_policy(model, env, eval_sr_path, eval_result_path, eval_dir=None, d
     if not debug:
         eval_sequences = tqdm(eval_sequences, position=0, leave=True)
 
+    num_envs = env.env_num
     sequence_i = 0
+    sequence_i_pack = []
+    initial_state_pack = []
+    eval_sequence_pack = []
     for initial_state, eval_sequence in eval_sequences:
-        result = evaluate_sequence(env, model, task_oracle, initial_state, eval_sequence, val_annotations, debug, eval_dir, sequence_i)
-        results.append(result)
+        # result = evaluate_sequence(env, model, task_oracle, initial_state, eval_sequence, val_annotations, debug, eval_dir, sequence_i)
+        # results.append(result)
+        sequence_i_pack.append(sequence_i)
+        initial_state_pack.append(initial_state)
+        eval_sequence_pack.append(eval_sequence)
+
+        if len(sequence_i_pack) != num_envs:
+            sequence_i += 1
+            continue
+
+        result = evaluate_sequences(env, model, task_oracle, initial_state_pack, eval_sequence_pack, val_annotations, debug, eval_dir, sequence_i_pack)
+        results += result
+        sequence_i_pack = []
+        initial_state_pack = []
+        eval_sequence_pack = []
         if not debug:
             success_list = count_success(results)
             with open(eval_sr_path, 'a') as f:
@@ -106,50 +123,64 @@ def evaluate_policy(model, env, eval_sr_path, eval_result_path, eval_dir=None, d
             )
         else:
             sequence_i += 1
+
     print_and_save(results, eval_sequences, eval_result_path, None)
     return results
 
 
-def evaluate_sequence(env, model, task_checker, initial_state, eval_sequence, val_annotations, debug, eval_dir, sequence_i):
-    robot_obs, scene_obs = get_env_state_for_initial_condition(initial_state)
-    num_envs = env.env_num
-    obs, start_info = env.reset(robot_obs=robot_obs, scene_obs=scene_obs)
-    obs = tianshou.data.Batch(obs)
+def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences, val_annotations, debug, eval_dir, sequence_is):
+    initial_obs = [get_env_state_for_initial_condition(initial_state) for initial_state in initial_states]
+    robot_obses, scene_obses = [item[0] for item in initial_obs], [item[1] for item in initial_obs]
+    obs, start_info = env.reset(robot_obs=robot_obses, scene_obs=scene_obses)
+    success_counter = [0 for _ in initial_states]
+    terminate_flag = [False for _ in initial_states]
     if debug:
         time.sleep(1)
         print()
         print()
-        print(f"Evaluating sequence: {' -> '.join(eval_sequence)}")
+        for eval_sequence in eval_sequences:
+            print(f"Evaluating sequence: {' -> '.join(eval_sequence)}")
         print("Subtask: ", end="")
+    for subtask_i, subtasks in enumerate(zip(*eval_sequences)):
 
-    subtask_is = [subtask_i for subtask_i, subtask in enumerate(eval_sequence)]
-    subtasks = [subtask for subtask_i, subtask in enumerate(eval_sequence)]
-    lang_annotations = [val_annotations[subtasks[i]][0] for i in range(num_envs)]
-    model.reset()
-    done = [False] * num_envs
-    results = [False] * num_envs
+        if debug:
+            for subtask in subtasks:
+                print(f"{subtask} ", end="")
+            time.sleep(0.5)
+        lang_annotations = [val_annotations[subtask][0] for subtask in subtasks]
+        model.reset()
+        num_envs = min(env.env_num, len(subtasks))
+        done = [False] * num_envs
+        successes = [False] * num_envs
 
-    if debug:
-        img_lists = [[] for _ in range(num_envs)]
+        if debug:
+            img_lists = [[] for _ in range(num_envs)]
 
-    for step in range(EP_LEN):
-        if all(done):
+        for step in range(EP_LEN):
+            if all(done):
+                break
+
+            actions = model.step(obs, lang_annotations)
+            obs, _, _, _, current_info = env.step(actions)
+            obs = tianshou.data.Batch(obs)
+
+            for i in range(num_envs):
+                if not done[i]:
+                    current_task_info = task_checker.get_task_info_for_set(start_info[i], current_info[i], {subtasks[i]})
+                    if len(current_task_info) > 0:
+                        successes[i] = True
+                        done[i] = True
+                    if debug:
+                        img_copy = copy.deepcopy(obs[i]['rgb_obs']['rgb_static'])
+                        img_lists[i].append(img_copy)
+
+        for i, success in enumerate(successes):
+            if success and not terminate_flag[i]:
+                success_counter[i] += 1
+            elif not success:
+                terminate_flag[i] = True
+        if all(terminate_flag):
             break
-
-        actions = model.step(obs, lang_annotations)
-        obs, _, _, _, current_info = env.step(actions)
-        obs = tianshou.data.Batch(obs)
-
-        for i in range(num_envs):
-            if not done[i]:
-                current_task_info = task_checker.get_task_info_for_set(start_info[i], current_info[i], {subtasks[i]})
-                if len(current_task_info) > 0:
-                    results[i] = True
-                    done[i] = True
-                if debug:
-                    img_copy = copy.deepcopy(obs[i]['rgb_obs']['rgb_static'])
-                    img_lists[i].append(img_copy)
-    success_counter = sum([1 for i in results if i is True])
     return success_counter
 
 
@@ -162,7 +193,7 @@ def main():
     parser.add_argument('--policy_ckpt_path', type=str, help="Path to the evaluating checkpoint")
     parser.add_argument('--mae_ckpt_path', type=str, help="Path to the MAE checkpoint")
     parser.add_argument('--configs_path', type=str, help="Path to the config json file")
-    parser.add_argument('--device', default=0, type=int, help="CUDA device")    
+    parser.add_argument('--device', default=0, type=int, help="CUDA device")
     args = parser.parse_args()
 
     # with open(args.configs_path, "r") as f:
@@ -177,15 +208,15 @@ def main():
     model = DummyCalvinEvaluation()
 
     observation_space = {
-        'rgb_obs': ['rgb_static', 'rgb_gripper'], 
-        'depth_obs': [], 
-        'state_obs': ['robot_obs'], 
-        'actions': ['rel_actions'], 
+        'rgb_obs': ['rgb_static', 'rgb_gripper'],
+        'depth_obs': [],
+        'state_obs': ['robot_obs'],
+        'actions': ['rel_actions'],
         'language': ['language']}
 
     def env_initializer(dataset_path, observation_space, device_id, env_idx):
         def make_single_env():
-            env = make_env(dataset_path, observation_space, device_id)
+            env = make_env(dataset_path, observation_space, device_id, env_idx)
             return env
 
         return make_single_env
@@ -196,7 +227,8 @@ def main():
             envs.append(env_initializer(dataset_path, observation_space, start_device_id + 0, i))
         return envs
 
-    num_parallel_envs = 4  # Example: Create 4 parallel environments
+    num_parallel_envs = 20
+    assert NUM_SEQUENCES % num_parallel_envs == 0
     initializers = make_env_initializers(args.dataset_dir, observation_space, num_parallel_envs)
     env = SubprocVectorEnv(initializers)
     # env = make_env(args.dataset_dir, observation_space, args.device)

@@ -125,11 +125,16 @@ class CalvinEnvWrapperRaw(gym.Wrapper):
 
 
 class CalvinEnvWrapperRawGymnasium(gymnasium.Wrapper):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, env_idx=-1, **kwargs):
         env = CalvinEnvWrapperRaw(*args, **kwargs)
         super().__init__(env)
+        self.env_idx = env_idx
 
     def reset(self, *args, **kwargs):
+        if self.env_idx != -1:
+            # for parallel
+            args = (item[self.env_idx] for item in args)
+            kwargs = {k: item[self.env_idx] for k, item in kwargs.items()}
         obs = self.env.reset(*args, **kwargs)
         return obs, self.env.get_info()
 
