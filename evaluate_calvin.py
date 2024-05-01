@@ -123,7 +123,6 @@ def evaluate_policy(model, env, eval_sr_path, eval_result_path, eval_dir=None, d
             )
         else:
             sequence_i += 1
-
     print_and_save(results, eval_sequences, eval_result_path, None)
     return results
 
@@ -157,9 +156,6 @@ def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences,
             img_lists = [[] for _ in range(num_envs)]
 
         for step in range(EP_LEN):
-            if all(done):
-                break
-
             actions = model.step(obs, lang_annotations)
             obs, _, _, _, current_info = env.step(actions)
             obs = tianshou.data.Batch(obs)
@@ -173,12 +169,15 @@ def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences,
                     if debug:
                         img_copy = copy.deepcopy(obs[i]['rgb_obs']['rgb_static'])
                         img_lists[i].append(img_copy)
+            if all(done):
+                break
 
         for i, success in enumerate(successes):
-            if success and not terminate_flag[i]:
-                success_counter[i] += 1
-            elif not success:
-                terminate_flag[i] = True
+            if not terminate_flag[i]:
+                if success:
+                    success_counter[i] += 1
+                else:
+                    terminate_flag[i] = True
         if all(terminate_flag):
             break
     return success_counter
@@ -196,16 +195,18 @@ def main():
     parser.add_argument('--device', default=0, type=int, help="CUDA device")
     args = parser.parse_args()
 
-    # with open(args.configs_path, "r") as f:
-    #     variant = json.load(f)
-    # device = torch.device('cuda', args.device)
-    # model = GR1CalvinEvaluation(
-    #     mae_ckpt=args.mae_ckpt_path,
-    #     policy_ckpt=args.policy_ckpt_path,
-    #     variant=variant,
-    #     device=device)
-
-    model = DummyCalvinEvaluation()
+    if args.configs_path and args.mae_ckpt_path and args.policy_ckpt_path:
+        with open(args.configs_path, "r") as f:
+            variant = json.load(f)
+        device = torch.device('cuda', args.device)
+        model = GR1CalvinEvaluation(
+            mae_ckpt=args.mae_ckpt_path,
+            policy_ckpt=args.policy_ckpt_path,
+            variant=variant,
+            device=device)
+    else:
+        model = DummyCalvinEvaluation()
+        print("\n\n\n\n\nWarning: Using Dummy Model\n\n\n\n\n")
 
     observation_space = {
         'rgb_obs': ['rgb_static', 'rgb_gripper'],
