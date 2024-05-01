@@ -131,21 +131,48 @@ class GR1CalvinEvaluation(CalvinBaseModel):
 
         # RGB
         rgb = obs['rgb_obs']['rgb_static']
-        rgb = Image.fromarray(rgb)
-        rgb = T.ToTensor()(rgb.convert("RGB"))
-        rgb = self.preprocess(rgb)
+        if len(rgb.shape) > 3:
+            tmp = []
+            rgbs = rgb
+            for rgb in rgbs:
+                rgb = Image.fromarray(rgb)
+                rgb = T.ToTensor()(rgb.convert("RGB"))
+                rgb = self.preprocess(rgb)
+                tmp.append(rgb)
+            rgb = torch.stack(tmp)
+        else:
+            rgb = Image.fromarray(rgb)
+            rgb = T.ToTensor()(rgb.convert("RGB"))
+            rgb = self.preprocess(rgb)
+            rgb.unsqueeze_(0)
         self.rgb_list.append(rgb)
+
         hand_rgb = obs['rgb_obs']['rgb_gripper']
-        hand_rgb = Image.fromarray(hand_rgb)
-        hand_rgb = T.ToTensor()(hand_rgb.convert("RGB"))
-        hand_rgb = self.preprocess(hand_rgb)
+        if len(hand_rgb.shape) > 3:
+            tmp = []
+            hand_rgbs = hand_rgb
+            for hand_rgb in hand_rgbs:
+                hand_rgb = Image.fromarray(hand_rgb)
+                hand_rgb = T.ToTensor()(hand_rgb.convert("RGB"))
+                hand_rgb = self.preprocess(hand_rgb)
+                tmp.append(hand_rgb)
+            hand_rgb = torch.stack(tmp)
+        else:
+            hand_rgb = Image.fromarray(hand_rgb)
+            hand_rgb = T.ToTensor()(hand_rgb.convert("RGB"))
+            hand_rgb = self.preprocess(hand_rgb)
+            hand_rgb.unsqueeze_(0)
         self.hand_rgb_list.append(hand_rgb)
 
         # State
-        state = obs['robot_obs']
-        arm_state = state[:6]
-        gripper_state = state[-1]
-        state = torch.from_numpy(np.hstack([arm_state, gripper_state]))
+        no_batch = False
+        state = torch.from_numpy(obs['robot_obs'])
+        if state.dim() == 1:
+            state = state.unsqueeze(0)
+            no_batch = True
+        arm_state = state[:, :6]
+        gripper_state = state[:, -1].unsqueeze(1)
+        state = torch.cat((arm_state, gripper_state), dim=-1)
         self.state_list.append(state)
         
         # Buffer
@@ -160,30 +187,31 @@ class GR1CalvinEvaluation(CalvinBaseModel):
             buffer_len = len(self.rgb_list)
         
         # Static RGB
-        c, h, w = rgb.shape
-        rgb_data = torch.zeros((1, self.seq_len, c, h, w))
-        rgb_tensor = torch.stack(self.rgb_list, dim=0)  # (l, c, h, w)
-        rgb_data[0, :buffer_len] = rgb_tensor
+        c, h, w = rgb.shape[1:]
+        rgb_data = torch.zeros((rgb.size(0), self.seq_len, c, h, w))
+        rgb_tensor = torch.stack(self.rgb_list, dim=1)  # (b, l, c, h, w)
+        rgb_data[:, :buffer_len] = rgb_tensor[:, :buffer_len]
 
         # Hand RGB
-        c, h, w = hand_rgb.shape
-        hand_rgb_data = torch.zeros((1, self.seq_len, c, h, w))
-        hand_rgb_tensor = torch.stack(self.hand_rgb_list, dim=0)  # (l, c, h, w)
-        hand_rgb_data[0, :buffer_len] = hand_rgb_tensor
+        c, h, w = hand_rgb.shape[1:]
+        hand_rgb_data = torch.zeros((hand_rgb.size(0), self.seq_len, c, h, w))
+        hand_rgb_tensor = torch.stack(self.hand_rgb_list, dim=1)  # (b, l, c, h, w)
+        hand_rgb_data[:, :buffer_len] = hand_rgb_tensor[:, :buffer_len]
 
         # State
-        state_tensor = torch.stack(self.state_list, dim=0)  # (l, act_dim)
-        gripper_state_data = - torch.ones((1, self.seq_len)).float()
-        gripper_state_data[0, :buffer_len] = state_tensor[:, 6]
+        state_tensor = torch.stack(self.state_list, dim=1)  # (b, l, act_dim)
+        b = state_tensor.shape[0]
+        gripper_state_data = -torch.ones((b, self.seq_len)).float()
+        gripper_state_data[:, :buffer_len] = state_tensor[:, :, 6]
         gripper_state_data = (gripper_state_data + 1.0) / 2
         gripper_state_data = gripper_state_data.long()
-        gripper_state_data = F.one_hot(gripper_state_data, num_classes=2).float()  # (b, l, 2)
-        arm_state_data = torch.zeros((1, self.seq_len, self.act_dim - 1)).float()  # (b, l, act_dim - 1)
-        arm_state_data[0, :buffer_len] = state_tensor[:, :6]
+        gripper_state_data = F.one_hot(gripper_state_data, num_classes=2).float()
+        arm_state_data = torch.zeros((b, self.seq_len, self.act_dim - 1)).float()  # (b, l, act_dim - 1)
+        arm_state_data[:, :buffer_len] = state_tensor[:, :, :6]
 
         # Attention mask
-        attention_mask = torch.zeros(1, self.seq_len).long()
-        attention_mask[0, :buffer_len] = 1
+        attention_mask = torch.zeros(b, self.seq_len, device=self.device).long()
+        attention_mask[:, :buffer_len] = 1
 
         # Forward pass
         tokenized_text = tokenized_text.to(self.device)
@@ -203,23 +231,24 @@ class GR1CalvinEvaluation(CalvinBaseModel):
         )
 
         # Arm action
-        arm_action_preds = prediction['arm_action_preds']  # (1, l, act_dim - 1)
-        arm_action_preds = arm_action_preds.view(-1, self.act_dim - 1)  # (l, act_dim - 1)
-        arm_action_preds = arm_action_preds[attention_mask.flatten() > 0]
+        arm_action_preds = prediction['arm_action_preds']  # (b, l, act_dim - 1)
+        arm_action_preds = arm_action_preds[attention_mask > 0].view(-1, self.act_dim - 1)
 
         # Gripper action
-        gripper_action_preds = prediction['gripper_action_preds']  # (1, l, 1)
-        gripper_action_preds = gripper_action_preds.flatten()  # (l, )
-        gripper_action_preds = gripper_action_preds[attention_mask.flatten() > 0]
+        gripper_action_preds = prediction['gripper_action_preds']  # (b, l, 1)
+        gripper_action_preds = gripper_action_preds[attention_mask > 0]
 
         # Use the last action
-        arm_action_pred = arm_action_preds[-1]  # (act_dim - 1, )
-        gripper_action_pred = gripper_action_preds[-1:]  # (1, )
+        arm_action_pred = arm_action_preds.view(b, -1, arm_action_preds.shape[-1])[..., -1, :]
+        gripper_action_pred = gripper_action_preds.view(b, -1, gripper_action_preds.shape[-1])[..., -1, :]
+
         gripper_action_pred = torch.nn.Sigmoid()(gripper_action_pred)
         gripper_action_pred = gripper_action_pred > 0.5
         gripper_action_pred = gripper_action_pred.int().float()
         gripper_action_pred = gripper_action_pred * 2.0 - 1.0
-        action_pred = torch.cat((arm_action_pred, gripper_action_pred), dim=0)  # (act_dim,)
+        action_pred = torch.cat((arm_action_pred, gripper_action_pred), dim=-1)  # (b, act_dim,)
+        if no_batch:
+            action_pred = action_pred.squeeze(0)
         action_pred = action_pred.detach().cpu()
 
         self.rollout_step_counter += 1
