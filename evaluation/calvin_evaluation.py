@@ -75,8 +75,8 @@ class GR1CalvinEvaluation(CalvinBaseModel):
         # MAE
         model_mae = vits.__dict__['vit_base'](patch_size=16, num_classes=0)
         model_mae.to(self.device)
-        # checkpoint = torch.load(mae_ckpt, map_location='cpu')
-        # model_mae.load_state_dict(checkpoint['model'], strict=False)
+        checkpoint = torch.load(mae_ckpt, map_location='cpu')
+        model_mae.load_state_dict(checkpoint['model'], strict=False)
 
         # Resampler hparams
         resampler_params = dict()
@@ -109,10 +109,10 @@ class GR1CalvinEvaluation(CalvinBaseModel):
             n_positions=variant['n_positions'],
             resid_pdrop=variant['dropout'],
             attn_pdrop=variant['dropout'])
-        # print(f"loading state dict: {policy_ckpt}...")
-        # payload = torch.load(policy_ckpt)
-        # state_dict = payload['state_dict']
-        # msg = self.policy.load_state_dict(state_dict, strict=False)
+        print(f"loading state dict: {policy_ckpt}...")
+        payload = torch.load(policy_ckpt)
+        state_dict = payload['state_dict']
+        msg = self.policy.load_state_dict(state_dict, strict=False)
         self.policy.to(self.device)
         self.policy.eval()
 
