@@ -131,6 +131,7 @@ def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences,
     initial_obs = [get_env_state_for_initial_condition(initial_state) for initial_state in initial_states]
     robot_obses, scene_obses = [item[0] for item in initial_obs], [item[1] for item in initial_obs]
     obs, start_info = env.reset(robot_obs=robot_obses, scene_obs=scene_obses)
+    obs = tianshou.data.Batch(obs)
     success_counter = [0 for _ in initial_states]
     terminate_flag = [False for _ in initial_states]
     if debug:
