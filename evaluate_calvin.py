@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 CALVIN_ROOT = os.environ['CALVIN_ROOT']
 
 EP_LEN = 360
-NUM_SEQUENCES = 1000
+NUM_SEQUENCES = 50
 
 
 def make_env(dataset_path, observation_space, device_id):

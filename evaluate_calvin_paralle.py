@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 CALVIN_ROOT = os.environ['CALVIN_ROOT']
 
 EP_LEN = 360
-NUM_SEQUENCES = 1000
+NUM_SEQUENCES = 50
 
 
 def make_env(dataset_path, observation_space, device_id, env_idx=-1):
@@ -194,6 +194,7 @@ def main():
     parser.add_argument('--mae_ckpt_path', type=str, help="Path to the MAE checkpoint")
     parser.add_argument('--configs_path', type=str, help="Path to the config json file")
     parser.add_argument('--device', default=0, type=int, help="CUDA device")
+    parser.add_argument('--parallel', default=4, type=int, help="Environment number for parallel")
     args = parser.parse_args()
 
     if args.configs_path and args.mae_ckpt_path and args.policy_ckpt_path:
@@ -229,7 +230,7 @@ def main():
             envs.append(env_initializer(dataset_path, observation_space, start_device_id + 0, i))
         return envs
 
-    num_parallel_envs = 20
+    num_parallel_envs = args.parallel
     assert NUM_SEQUENCES % num_parallel_envs == 0
     initializers = make_env_initializers(args.dataset_dir, observation_space, num_parallel_envs)
     env = SubprocVectorEnv(initializers)
