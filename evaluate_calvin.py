@@ -35,6 +35,8 @@ import copy
 # This is for using the locally installed repo clone when using slurm
 from calvin_agent.models.calvin_base_model import CalvinBaseModel
 
+from evaluation.calvin_env_wrapper_raw import CalvinEnvWrapperRawGymnasium
+
 sys.path.insert(0, Path(__file__).absolute().parents[2].as_posix())
 
 from calvin_agent.evaluation.multistep_sequences import get_sequences
@@ -67,7 +69,7 @@ def make_env(dataset_path, observation_space, device_id):
     val_folder = Path(dataset_path) / "validation"
     from evaluation.calvin_env_wrapper_raw import CalvinEnvWrapperRaw
     device = torch.device('cuda', device_id)
-    env = CalvinEnvWrapperRaw(val_folder, observation_space, device)
+    env = CalvinEnvWrapperRawGymnasium(val_folder, observation_space, device, env_idx=0)
     return env
 
 
@@ -107,7 +109,8 @@ def evaluate_policy(model, env, eval_sr_path, eval_result_path, eval_dir=None, d
 
 def evaluate_sequence(env, model, task_checker, initial_state, eval_sequence, val_annotations, debug, eval_dir, sequence_i):
     robot_obs, scene_obs = get_env_state_for_initial_condition(initial_state)
-    env.reset(robot_obs=robot_obs, scene_obs=scene_obs)
+    obs, info = env.reset(robot_obs=[robot_obs], scene_obs=[scene_obs])
+    d = [obs, info]
     success_counter = 0
     if debug:
         time.sleep(1)
@@ -116,7 +119,7 @@ def evaluate_sequence(env, model, task_checker, initial_state, eval_sequence, va
         print(f"Evaluating sequence: {' -> '.join(eval_sequence)}")
         print("Subtask: ", end="")
     for subtask_i, subtask in enumerate(eval_sequence):
-        success = rollout(env, model, task_checker, subtask, val_annotations, debug, eval_dir, subtask_i, sequence_i)
+        success = rollout(env, model, task_checker, subtask, val_annotations, debug, eval_dir, subtask_i, sequence_i, d)
         if success:
             success_counter += 1
         else:
@@ -124,26 +127,32 @@ def evaluate_sequence(env, model, task_checker, initial_state, eval_sequence, va
     return success_counter
 
 
-def rollout(env, model, task_oracle, subtask, val_annotations, debug, eval_dir, subtask_i, sequence_i):
+def rollout(env, model, task_oracle, subtask, val_annotations, debug, eval_dir, subtask_i, sequence_i, d):
     if debug:
         print(f"{subtask} ", end="")
         time.sleep(0.5)
+    obs = d[0]
     obs = env.get_obs()
     lang_annotation = val_annotations[subtask][0]
     model.reset()
+    start_info = d[1]
     start_info = env.get_info()
     if debug:
         img_list = []
     for step in range(EP_LEN):
         action = model.step(obs, lang_annotation)
-        obs, _, _, current_info = env.step(action)
+        obs, _, _, _, current_info = env.step(action)
         if debug:
             img_copy = copy.deepcopy(obs['rgb_obs']['rgb_static'])
             img_list.append(img_copy)
         # check if current step solves a task
         current_task_info = task_oracle.get_task_info_for_set(start_info, current_info, {subtask})
         if len(current_task_info) > 0:
+            d[0] = obs
+            d[1] = current_info
             return True
+        d[0] = obs
+        d[1] = current_info
     return False
 
 
