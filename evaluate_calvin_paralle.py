@@ -130,7 +130,7 @@ def evaluate_policy(model, env, eval_sr_path, eval_result_path, eval_dir=None, d
 def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences, val_annotations, debug, eval_dir, sequence_is):
     initial_obs = [get_env_state_for_initial_condition(initial_state) for initial_state in initial_states]
     robot_obses, scene_obses = [item[0] for item in initial_obs], [item[1] for item in initial_obs]
-    obs, start_info = env.reset(robot_obs=robot_obses, scene_obs=scene_obses)
+    obs, current_info = env.reset(robot_obs=robot_obses, scene_obs=scene_obses)
     obs = tianshou.data.Batch(obs)
     success_counter = [0 for _ in initial_states]
     terminate_flag = [False for _ in initial_states]
@@ -147,9 +147,12 @@ def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences,
             for subtask in subtasks:
                 print(f"{subtask} ", end="")
             time.sleep(0.5)
+
+        start_info = current_info
         lang_annotations = [val_annotations[subtask][0] for subtask in subtasks]
         model.reset()
-        num_envs = min(env.env_num, len(subtasks))
+        assert env.env_num == len(subtasks)
+        num_envs = env.env_num
         done = [False] * num_envs
         successes = [False] * num_envs
 
@@ -194,7 +197,7 @@ def main():
     parser.add_argument('--mae_ckpt_path', type=str, help="Path to the MAE checkpoint")
     parser.add_argument('--configs_path', type=str, help="Path to the config json file")
     parser.add_argument('--device', default=0, type=int, help="CUDA device")
-    parser.add_argument('--parallel', default=4, type=int, help="Environment number for parallel")
+    parser.add_argument('--parallel', default=2, type=int, help="Environment number for parallel")
     args = parser.parse_args()
 
     if args.configs_path and args.mae_ckpt_path and args.policy_ckpt_path:
