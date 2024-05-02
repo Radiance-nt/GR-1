@@ -132,11 +132,11 @@ def rollout(env, model, task_oracle, subtask, val_annotations, debug, eval_dir, 
         print(f"{subtask} ", end="")
         time.sleep(0.5)
     obs = d[0]
-    obs = env.get_obs()
+    # obs = env.get_obs()
     lang_annotation = val_annotations[subtask][0]
     model.reset()
     start_info = d[1]
-    start_info = env.get_info()
+    # start_info = env.get_info()
     if debug:
         img_list = []
     for step in range(EP_LEN):
