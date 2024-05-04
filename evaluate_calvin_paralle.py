@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 CALVIN_ROOT = os.environ['CALVIN_ROOT']
 
 EP_LEN = 360
-NUM_SEQUENCES = 50
+NUM_SEQUENCES = 200
 
 
 def make_env(dataset_path, observation_space, device_id, env_idx=-1):
@@ -88,7 +88,7 @@ def evaluate_policy(model, env, eval_sr_path, eval_result_path, eval_dir=None, d
     if not debug:
         eval_sequences = tqdm(eval_sequences, position=0, leave=True)
 
-    num_envs = env.env_num
+    eval_num_one_time = 100
     sequence_i = 0
     sequence_i_pack = []
     initial_state_pack = []
@@ -100,11 +100,12 @@ def evaluate_policy(model, env, eval_sr_path, eval_result_path, eval_dir=None, d
         initial_state_pack.append(initial_state)
         eval_sequence_pack.append(eval_sequence)
 
-        if len(sequence_i_pack) != num_envs:
+        if not (sequence_i == len(eval_sequences - 1)) and len(sequence_i_pack) != eval_num_one_time:
             sequence_i += 1
             continue
 
-        result = evaluate_sequences(env, model, task_oracle, initial_state_pack, eval_sequence_pack, val_annotations, debug, eval_dir, sequence_i_pack)
+        result = evaluate_sequences(env, model, task_oracle, initial_state_pack, eval_sequence_pack, val_annotations,
+                                    debug, eval_dir, sequence_i_pack)
         results += result
         sequence_i_pack = []
         initial_state_pack = []
@@ -112,7 +113,7 @@ def evaluate_policy(model, env, eval_sr_path, eval_result_path, eval_dir=None, d
         if not debug:
             success_list = count_success(results)
             with open(eval_sr_path, 'a') as f:
-                line =f"{sequence_i}/{NUM_SEQUENCES}: "
+                line = f"{sequence_i}/{NUM_SEQUENCES}: "
                 for sr in success_list:
                     line += f"{sr:.3f} | "
                 sequence_i += 1
@@ -127,64 +128,72 @@ def evaluate_policy(model, env, eval_sr_path, eval_result_path, eval_dir=None, d
     return results
 
 
-def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences, val_annotations, debug, eval_dir, sequence_is):
-    initial_obs = [get_env_state_for_initial_condition(initial_state) for initial_state in initial_states]
-    robot_obses, scene_obses = [item[0] for item in initial_obs], [item[1] for item in initial_obs]
-    obs, current_info = env.reset(robot_obs=robot_obses, scene_obs=scene_obses)
-    obs = tianshou.data.Batch(obs)
-    success_counter = [0 for _ in initial_states]
-    terminate_flag = [False for _ in initial_states]
-    if debug:
-        time.sleep(1)
-        print()
-        print()
-        for eval_sequence in eval_sequences:
-            print(f"Evaluating sequence: {' -> '.join(eval_sequence)}")
-        print("Subtask: ", end="")
-    for subtask_i, subtasks in enumerate(zip(*eval_sequences)):
+def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences, val_annotations, debug, eval_dir,
+                       sequence_is):
+    results = []
+    num_envs = env.env_num
+    robot_obses = [None for _ in range(num_envs)]
+    scene_obses = [None for _ in range(num_envs)]
+    episode_subtasks = [None for _ in range(num_envs)]
+    subtask_dones = [True for _ in range(num_envs)]
+    counter = [None for _ in range(num_envs)]
+    start_info = [None for _ in range(num_envs)]
+    obs = [None for _ in range(num_envs)]
+    current_info = [None for _ in range(num_envs)]
+    lang_annotations = [None for _ in range(num_envs)]
+    episode_env_steps = np.ones(num_envs)
+    subtask_iterators = [iter([]) for _ in range(num_envs)]
+    finished = [False for _ in range(num_envs)]
+    current_sequence_id = 0
+    while not all(finished):
+        need_to_reset = [False for _ in range(num_envs)]
+        for i, subtask_done in enumerate(subtask_dones):
+            if not subtask_done:
+                continue
+            subtask_dones[i] = False
+            try:
+                next_subtask = next(subtask_iterators[i])
+            except:
+                if counter[i] is not None and not finished[i]:
+                    results.append(counter[i])
 
-        if debug:
-            for subtask in subtasks:
-                print(f"{subtask} ", end="")
-            time.sleep(0.5)
+                # coming a new initial_state and sequence
+                need_to_reset[i] = True
+                initial_state = initial_states[current_sequence_id % len(eval_sequences)]
+                robot_obses[i], scene_obses[i] = get_env_state_for_initial_condition(initial_state)
+                counter[i] = 0
+                subtask_iterators[i] = iter(eval_sequences[current_sequence_id % len(eval_sequences)])
+                current_sequence_id += 1
+                next_subtask = next(subtask_iterators[i])
+                if current_sequence_id >= len(eval_sequences):
+                    finished[i] = True
 
-        start_info = current_info
-        lang_annotations = [val_annotations[subtask][0] for subtask in subtasks]
-        model.reset()
-        assert env.env_num == len(subtasks)
-        num_envs = env.env_num
-        done = [False] * num_envs
-        successes = [False] * num_envs
+            episode_subtasks[i] = next_subtask
+            start_info[i] = current_info[i]
+            model.reset(i)
+            lang_annotations[i] = val_annotations[next_subtask][0]
+            episode_env_steps[i] = 1
 
-        if debug:
-            img_lists = [[] for _ in range(num_envs)]
+        new_obs, new_current_info = env.reset(robot_obs=robot_obses, scene_obs=scene_obses, need_to_reset=need_to_reset)
+        for i, has_reset in enumerate(need_to_reset):
+            if has_reset:
+                obs[i], current_info[i] = new_obs[i], new_current_info[i]
+        obs = tianshou.data.Batch(obs)
+        actions = model.step(obs, lang_annotations)
+        obs, _, _, _, current_info = env.step(actions)
 
-        for step in range(EP_LEN):
-            actions = model.step(obs, lang_annotations)
-            obs, _, _, _, current_info = env.step(actions)
-            obs = tianshou.data.Batch(obs)
+        episode_env_steps += 1
 
-            for i in range(num_envs):
-                if not done[i]:
-                    current_task_info = task_checker.get_task_info_for_set(start_info[i], current_info[i], {subtasks[i]})
-                    if len(current_task_info) > 0:
-                        successes[i] = True
-                        done[i] = True
-                    if debug:
-                        img_copy = copy.deepcopy(obs[i]['rgb_obs']['rgb_static'])
-                        img_lists[i].append(img_copy)
-            if all(done):
-                break
+        for i, episode_subtask in enumerate(episode_subtasks):
+            current_task_info = task_checker.get_task_info_for_set(start_info[i], current_info[i], {episode_subtask[i]})
+            if len(current_task_info) > 0:
+                counter[i] += 1
+                subtask_dones[i] = True
+            if episode_env_steps[i] > EP_LEN:
+                subtask_dones[i] = True
+                subtask_iterators[i] = iter([])
 
-        for i, success in enumerate(successes):
-            if not terminate_flag[i]:
-                if success:
-                    success_counter[i] += 1
-                else:
-                    terminate_flag[i] = True
-        if all(terminate_flag):
-            break
-    return success_counter
+    return results
 
 
 def main():
@@ -234,7 +243,6 @@ def main():
         return envs
 
     num_parallel_envs = args.parallel
-    assert NUM_SEQUENCES % num_parallel_envs == 0
     initializers = make_env_initializers(args.dataset_dir, observation_space, num_parallel_envs)
     env = SubprocVectorEnv(initializers)
     # env = make_env(args.dataset_dir, observation_space, args.device)
@@ -244,10 +252,10 @@ def main():
     eval_sr_path = os.path.join(args.eval_dir, "success_rate.txt")
     eval_result_path = os.path.join(args.eval_dir, "result.txt")
     evaluate_policy(
-        model, 
+        model,
         env,
-        eval_sr_path, 
-        eval_result_path, 
+        eval_sr_path,
+        eval_result_path,
         args.eval_dir,
         debug=args.debug)
 

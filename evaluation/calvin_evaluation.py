@@ -46,6 +46,7 @@ class DummyCalvinEvaluation(CalvinBaseModel):
 
 
 class GR1CalvinEvaluation(CalvinBaseModel):
+    parallel_num = 99
     def __init__(self,
                  mae_ckpt,
                  policy_ckpt,
@@ -115,13 +116,22 @@ class GR1CalvinEvaluation(CalvinBaseModel):
         msg = self.policy.load_state_dict(state_dict, strict=False)
         self.policy.to(self.device)
         self.policy.eval()
-
-    def reset(self):
-        """Reset function."""
-        self.rgb_list = []
-        self.hand_rgb_list = []
-        self.state_list = []
+        self.rgb_list = [[] for _ in range(self.parallel_num)]
+        self.hand_rgb_list = [[] for _ in range(self.parallel_num)]
+        self.state_list = [[] for _ in range(self.parallel_num)]
         self.rollout_step_counter = 0
+
+    def reset(self, env_idx=None):
+        """Reset function."""
+        if env_idx is None:
+            self.rgb_list = [[] for _ in range(self.parallel_num)]
+            self.hand_rgb_list = [[] for _ in range(self.parallel_num)]
+            self.state_list = [[] for _ in range(self.parallel_num)]
+            self.rollout_step_counter = 0
+        else:
+            self.rgb_list[env_idx] = []
+            self.hand_rgb_list[env_idx] = []
+            self.state_list[env_idx] = []
 
     def step(self, obs, goal):
         """Step function."""
@@ -134,35 +144,33 @@ class GR1CalvinEvaluation(CalvinBaseModel):
         if len(rgb.shape) > 3:
             tmp = []
             rgbs = rgb
-            for rgb in rgbs:
+            for i, rgb in enumerate(rgbs):
                 rgb = Image.fromarray(rgb)
                 rgb = T.ToTensor()(rgb.convert("RGB"))
                 rgb = self.preprocess(rgb)
                 tmp.append(rgb)
-            rgb = torch.stack(tmp)
+                self.rgb_list[i].append(rgb)
         else:
             rgb = Image.fromarray(rgb)
             rgb = T.ToTensor()(rgb.convert("RGB"))
             rgb = self.preprocess(rgb)
-            rgb.unsqueeze_(0)
-        self.rgb_list.append(rgb)
+            self.rgb_list[0].append(rgb)
 
         hand_rgb = obs['rgb_obs']['rgb_gripper']
         if len(hand_rgb.shape) > 3:
             tmp = []
             hand_rgbs = hand_rgb
-            for hand_rgb in hand_rgbs:
+            for i, hand_rgb in enumerate(hand_rgbs):
                 hand_rgb = Image.fromarray(hand_rgb)
                 hand_rgb = T.ToTensor()(hand_rgb.convert("RGB"))
                 hand_rgb = self.preprocess(hand_rgb)
                 tmp.append(hand_rgb)
-            hand_rgb = torch.stack(tmp)
+                self.hand_rgb_list[i].append(rgb)
         else:
             hand_rgb = Image.fromarray(hand_rgb)
             hand_rgb = T.ToTensor()(hand_rgb.convert("RGB"))
             hand_rgb = self.preprocess(hand_rgb)
-            hand_rgb.unsqueeze_(0)
-        self.hand_rgb_list.append(hand_rgb)
+            self.hand_rgb_list[0].append(hand_rgb)
 
         # State
         no_batch = False
@@ -173,45 +181,61 @@ class GR1CalvinEvaluation(CalvinBaseModel):
         arm_state = state[:, :6]
         gripper_state = state[:, -1].unsqueeze(1)
         state = torch.cat((arm_state, gripper_state), dim=-1)
-        self.state_list.append(state)
-        
+        if len(state.shape) > 1:
+            b = state.size(0)
+            for i, s in enumerate(state):
+                self.state_list[i].append(s)
+        else:
+            b = 1
+            self.state_list[0].append(state)
+
         # Buffer
-        buffer_len = len(self.rgb_list)
-        if buffer_len > self.seq_len:
-            self.rgb_list.pop(0)
-            self.hand_rgb_list.pop(0)
-            self.state_list.pop(0)
-            assert len(self.rgb_list) == self.seq_len
-            assert len(self.hand_rgb_list) == self.seq_len
-            assert len(self.state_list) == self.seq_len
-            buffer_len = len(self.rgb_list)
-        
+        for i in range(len(state)):
+            buffer_len = len(self.rgb_list[i])
+            if buffer_len > self.seq_len:
+                self.rgb_list[i].pop(0)
+                self.hand_rgb_list[i].pop(0)
+                self.state_list[i].pop(0)
+
+                assert len(self.rgb_list[i]) == self.seq_len
+                assert len(self.hand_rgb_list[i]) == self.seq_len
+                assert len(self.state_list[i]) == self.seq_len
+
         # Static RGB
-        c, h, w = rgb.shape[1:]
-        rgb_data = torch.zeros((rgb.size(0), self.seq_len, c, h, w))
-        rgb_tensor = torch.stack(self.rgb_list, dim=1)  # (b, l, c, h, w)
-        rgb_data[:, :buffer_len] = rgb_tensor[:, :buffer_len]
+        c, h, w = rgb.shape[-3:]
+        rgb_data = torch.zeros((b, self.seq_len, c, h, w))
+        for i in range(b):
+            buffer_len = len(self.rgb_list[i])
+            rgb_tensor = torch.stack(self.rgb_list[i], dim=0)  # (b, l, c, h, w)
+            rgb_data[i, :buffer_len] = rgb_tensor[:buffer_len]
 
         # Hand RGB
-        c, h, w = hand_rgb.shape[1:]
-        hand_rgb_data = torch.zeros((hand_rgb.size(0), self.seq_len, c, h, w))
-        hand_rgb_tensor = torch.stack(self.hand_rgb_list, dim=1)  # (b, l, c, h, w)
-        hand_rgb_data[:, :buffer_len] = hand_rgb_tensor[:, :buffer_len]
+        c, h, w = hand_rgb.shape[-3:]
+        hand_rgb_data = torch.zeros((b, self.seq_len, c, h, w))
+        for i in range(b):
+            buffer_len = len(self.hand_rgb_list[i])
+            hand_rgb_tensor = torch.stack(self.hand_rgb_list[i], dim=0)  # (b, l, c, h, w)
+            hand_rgb_data[i, :buffer_len] = hand_rgb_tensor[:buffer_len]
 
         # State
-        state_tensor = torch.stack(self.state_list, dim=1)  # (b, l, act_dim)
-        b = state_tensor.shape[0]
+        # b = state_tensor.shape[0]
         gripper_state_data = -torch.ones((b, self.seq_len)).float()
-        gripper_state_data[:, :buffer_len] = state_tensor[:, :, 6]
+        for i in range(b):
+            buffer_len = len(self.state_list[i])
+            gripper_state_data[i, :buffer_len] = torch.stack(self.state_list[i], dim=0)[:, 6]
         gripper_state_data = (gripper_state_data + 1.0) / 2
         gripper_state_data = gripper_state_data.long()
         gripper_state_data = F.one_hot(gripper_state_data, num_classes=2).float()
         arm_state_data = torch.zeros((b, self.seq_len, self.act_dim - 1)).float()  # (b, l, act_dim - 1)
-        arm_state_data[:, :buffer_len] = state_tensor[:, :, :6]
+        for i in range(b):
+            buffer_len = len(self.state_list[i])
+            arm_state_data[i, :buffer_len] = torch.stack(self.state_list[i], dim=0)[:, :6]
 
         # Attention mask
         attention_mask = torch.zeros(b, self.seq_len, device=self.device).long()
-        attention_mask[:, :buffer_len] = 1
+        for i in range(b):
+            buffer_len = len(self.state_list[i])
+            attention_mask[:, :buffer_len] = 1
 
         # Forward pass
         tokenized_text = tokenized_text.to(self.device)

@@ -132,6 +132,11 @@ class CalvinEnvWrapperRawGymnasium(gymnasium.Wrapper):
 
     def reset(self, *args, **kwargs):
         if self.env_idx != -1:
+            if "need_to_reset" in kwargs:
+                if not kwargs["need_to_reset"][self.env_idx]:
+                    return self.env.get_obs(), self.env.get_info()
+                else:
+                    del kwargs["need_to_reset"]
             # for parallel
             args = (item[self.env_idx] for item in args)
             kwargs = {k: item[self.env_idx] for k, item in kwargs.items()}
