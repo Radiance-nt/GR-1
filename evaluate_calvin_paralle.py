@@ -155,6 +155,7 @@ def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences,
                 next_subtask = next(subtask_iterators[i])
             except:
                 if counter[i] is not None and not finished[i]:
+                    print(f"{i}: {episode_subtasks[i]} finished, counter is {counter[i]}.")
                     results.append(counter[i])
 
                 # coming a new initial_state and sequence
@@ -169,6 +170,7 @@ def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences,
                     finished[i] = True
 
             episode_subtasks[i] = next_subtask
+            print(f"{i}: switch to a new subtask {next_subtask}.")
             start_info[i] = current_info[i]
             model.reset(i)
             lang_annotations[i] = val_annotations[next_subtask][0]
@@ -189,9 +191,11 @@ def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences,
             if len(current_task_info) > 0:
                 counter[i] += 1
                 subtask_dones[i] = True
+                print(f"{i}: {episode_subtasks[i]} success.")
             if episode_env_steps[i] > EP_LEN:
                 subtask_dones[i] = True
                 subtask_iterators[i] = iter([])
+                print(f"{i}: {episode_subtasks[i]} failed.")
 
     return results
 

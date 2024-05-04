@@ -218,7 +218,6 @@ class GR1CalvinEvaluation(CalvinBaseModel):
             hand_rgb_data[i, :buffer_len] = hand_rgb_tensor[:buffer_len]
 
         # State
-        # b = state_tensor.shape[0]
         gripper_state_data = -torch.ones((b, self.seq_len)).float()
         for i in range(b):
             buffer_len = len(self.state_list[i])
