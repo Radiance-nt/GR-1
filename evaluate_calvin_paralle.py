@@ -100,7 +100,7 @@ def evaluate_policy(model, env, eval_sr_path, eval_result_path, eval_dir=None, d
         initial_state_pack.append(initial_state)
         eval_sequence_pack.append(eval_sequence)
 
-        if not (sequence_i == len(eval_sequences - 1)) and len(sequence_i_pack) != eval_num_one_time:
+        if not (sequence_i == len(eval_sequences) - 1) and len(sequence_i_pack) != eval_num_one_time:
             sequence_i += 1
             continue
 
