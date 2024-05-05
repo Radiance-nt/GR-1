@@ -187,7 +187,7 @@ def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences,
         episode_env_steps += 1
 
         for i, episode_subtask in enumerate(episode_subtasks):
-            current_task_info = task_checker.get_task_info_for_set(start_info[i], current_info[i], {episode_subtask[i]})
+            current_task_info = task_checker.get_task_info_for_set(start_info[i], current_info[i], {episode_subtask})
             if len(current_task_info) > 0:
                 counter[i] += 1
                 subtask_dones[i] = True
