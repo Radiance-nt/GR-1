@@ -180,6 +180,7 @@ def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences,
         for i, has_reset in enumerate(need_to_reset):
             if has_reset:
                 obs[i], current_info[i] = new_obs[i], new_current_info[i]
+                start_info[i] = current_info[i]
         obs = tianshou.data.Batch(obs)
         actions = model.step(obs, lang_annotations)
         obs, _, _, _, current_info = env.step(actions)
