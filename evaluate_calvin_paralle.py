@@ -84,52 +84,32 @@ def evaluate_policy(model, env, eval_sr_path, eval_result_path, eval_dir=None, e
     eval_dir = get_log_dir(eval_dir)
     eval_sequences = get_sequences(NUM_SEQUENCES)
 
-    results = []
     if not debug:
-        eval_sequences = tqdm(eval_sequences, position=0, leave=True)
+        tqdm_eval_sequences = tqdm(eval_sequences, position=0, leave=True)
 
-    eval_num_one_time = eval_one_time
-    sequence_i = 0
-    sequence_i_pack = []
-    initial_state_pack = []
-    eval_sequence_pack = []
-    for initial_state, eval_sequence in eval_sequences:
-        # result = evaluate_sequence(env, model, task_oracle, initial_state, eval_sequence, val_annotations, debug, eval_dir, sequence_i)
-        # results.append(result)
-        sequence_i_pack.append(sequence_i)
-        initial_state_pack.append(initial_state)
-        eval_sequence_pack.append(eval_sequence)
+    def print_function(sequence_i, results):
+        tqdm_eval_sequences.update(1)
+        success_list = count_success(results)
+        with open(eval_sr_path, 'a') as f:
+            line = f"{sequence_i}/{NUM_SEQUENCES}: "
+            for sr in success_list:
+                line += f"{sr:.3f} | "
+            line += "\n"
+            f.write(line)
+        tqdm_eval_sequences.set_description(
+            " ".join([f"{i + 1}/5 : {v * 100:.1f}% |" for i, v in enumerate(success_list)]) + "|"
+        )
 
-        if not (sequence_i == len(eval_sequences) - 1) and len(sequence_i_pack) != eval_num_one_time:
-            sequence_i += 1
-            continue
+    sequence_i_pack = [i for i in range(len(eval_sequences))]
+    initial_state_pack, eval_sequence_pack = zip(*eval_sequences)
+    results = evaluate_sequences(env, model, task_oracle, initial_state_pack, eval_sequence_pack, val_annotations,
+                       debug, eval_dir, sequence_i_pack, print_func=print_function)
 
-        result = evaluate_sequences(env, model, task_oracle, initial_state_pack, eval_sequence_pack, val_annotations,
-                                    debug, eval_dir, sequence_i_pack)
-        results += result
-        sequence_i_pack = []
-        initial_state_pack = []
-        eval_sequence_pack = []
-        if not debug:
-            success_list = count_success(results)
-            with open(eval_sr_path, 'a') as f:
-                line = f"{sequence_i}/{NUM_SEQUENCES}: "
-                for sr in success_list:
-                    line += f"{sr:.3f} | "
-                sequence_i += 1
-                line += "\n"
-                f.write(line)
-            eval_sequences.set_description(
-                " ".join([f"{i + 1}/5 : {v * 100:.1f}% |" for i, v in enumerate(success_list)]) + "|"
-            )
-        else:
-            sequence_i += 1
     print_and_save(results, eval_sequences, eval_result_path, None)
-    return results
 
 
 def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences, val_annotations, debug, eval_dir,
-                       sequence_is):
+                       sequence_is, print_func=None):
     results = []
     num_envs = env.env_num
     robot_obses = [None for _ in range(num_envs)]
@@ -155,8 +135,10 @@ def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences,
                 next_subtask = next(subtask_iterators[i])
             except:
                 if counter[i] is not None and not finished[i]:
-                    print(f"{i}: {episode_subtasks[i]} finished, counter is {counter[i]}.")
+                    # print(f"{i}: {episode_subtasks[i]} finished, counter is {counter[i]}.")
                     results.append(counter[i])
+                    if print_func is not None:
+                        print_func(current_sequence_id, results)
 
                 # coming a new initial_state and sequence
                 need_to_reset[i] = True
@@ -170,7 +152,7 @@ def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences,
                     finished[i] = True
 
             episode_subtasks[i] = next_subtask
-            print(f"{i}: switch to a new subtask {next_subtask}.")
+            # print(f"{i}: switch to a new subtask {next_subtask}.")
             start_info[i] = current_info[i]
             model.reset(i)
             lang_annotations[i] = val_annotations[next_subtask][0]
@@ -192,11 +174,11 @@ def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences,
             if len(current_task_info) > 0:
                 counter[i] += 1
                 subtask_dones[i] = True
-                print(f"{i}: {episode_subtasks[i]} success.")
+                # print(f"{i}: {episode_subtasks[i]} success.")
             if episode_env_steps[i] > EP_LEN:
                 subtask_dones[i] = True
                 subtask_iterators[i] = iter([])
-                print(f"{i}: {episode_subtasks[i]} failed.")
+                # print(f"{i}: {episode_subtasks[i]} failed.")
 
     return results
 
@@ -212,7 +194,6 @@ def main():
     parser.add_argument('--configs_path', type=str, help="Path to the config json file")
     parser.add_argument('--device', default=0, type=int, help="CUDA device")
     parser.add_argument('--parallel', default=2, type=int, help="Environment number for parallel")
-    parser.add_argument('--eval_one_time', '-e', default=100, type=int, help="Evaluation")
     args = parser.parse_args()
 
     if args.configs_path and args.mae_ckpt_path and args.policy_ckpt_path:
@@ -263,7 +244,6 @@ def main():
         eval_sr_path,
         eval_result_path,
         args.eval_dir,
-        eval_one_time=args.eval_one_time,
         debug=args.debug)
 
 
