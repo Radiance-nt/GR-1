@@ -244,15 +244,33 @@ class GR1CalvinEvaluation(CalvinBaseModel):
         gripper_state_data = gripper_state_data.to(self.device)
         state_data = {'arm': arm_state_data, 'gripper': gripper_state_data}
         attention_mask = attention_mask.to(self.device)
-        with torch.no_grad():
-            prediction = self.policy(
-                rgb=rgb_data, 
-                hand_rgb=hand_rgb_data,
-                state=state_data,
-                language=tokenized_text,
-                attention_mask=attention_mask
-        )
 
+        individual_predictions = []
+
+        with torch.no_grad():
+            for i in range(b):
+                single_rgb = rgb_data[i:i + 1]
+                single_hand_rgb = hand_rgb_data[i:i + 1]
+                single_state = {key: value[i:i+1] for key, value in state_data.items()}
+                single_language = tokenized_text[i:i + 1]
+                single_attention_mask = attention_mask[i:i + 1]
+
+                single_prediction = self.policy(
+                    rgb=single_rgb,
+                    hand_rgb=single_hand_rgb,
+                    state=single_state,
+                    language=single_language,
+                    attention_mask=single_attention_mask
+                )
+
+                individual_predictions.append(single_prediction)
+
+        prediction = {}
+        keys = individual_predictions[0].keys()
+        for key in keys:
+            key_tensors = [pred[key] for pred in individual_predictions if pred[key] is not None]
+            if key_tensors:
+                prediction[key] = torch.cat(key_tensors, dim=0)
         # Arm action
         arm_action_preds = prediction['arm_action_preds']  # (b, l, act_dim - 1)
         arm_action_preds = arm_action_preds[attention_mask > 0].view(-1, self.act_dim - 1)
