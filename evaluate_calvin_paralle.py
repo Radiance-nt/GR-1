@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 CALVIN_ROOT = os.environ['CALVIN_ROOT']
 
 EP_LEN = 360
-NUM_SEQUENCES = 200
+NUM_SEQUENCES = 1000
 
 
 def make_env(dataset_path, observation_space, device_id, env_idx=-1):
@@ -153,7 +153,6 @@ def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences,
 
             episode_subtasks[i] = next_subtask
             # print(f"{i}: switch to a new subtask {next_subtask}.")
-            start_info[i] = current_info[i]
             model.reset(i)
             lang_annotations[i] = val_annotations[next_subtask][0]
             episode_env_steps[i] = 1
@@ -174,6 +173,7 @@ def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences,
             if len(current_task_info) > 0:
                 counter[i] += 1
                 subtask_dones[i] = True
+                start_info[i] = current_info[i]
                 # print(f"{i}: {episode_subtasks[i]} success.")
             if episode_env_steps[i] > EP_LEN:
                 subtask_dones[i] = True
