@@ -165,7 +165,7 @@ class GR1CalvinEvaluation(CalvinBaseModel):
                 hand_rgb = T.ToTensor()(hand_rgb.convert("RGB"))
                 hand_rgb = self.preprocess(hand_rgb)
                 tmp.append(hand_rgb)
-                self.hand_rgb_list[i].append(rgb)
+                self.hand_rgb_list[i].append(hand_rgb)
         else:
             hand_rgb = Image.fromarray(hand_rgb)
             hand_rgb = T.ToTensor()(hand_rgb.convert("RGB"))

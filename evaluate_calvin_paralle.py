@@ -76,7 +76,7 @@ def make_env(dataset_path, observation_space, device_id, env_idx=-1):
     return env
 
 
-def evaluate_policy(model, env, eval_sr_path, eval_result_path, eval_dir=None, debug=False):
+def evaluate_policy(model, env, eval_sr_path, eval_result_path, eval_dir=None, eval_one_time=4, debug=False):
     conf_dir = Path(f"{CALVIN_ROOT}/calvin_models") / "conf"
     task_cfg = OmegaConf.load(conf_dir / "callbacks/rollout/tasks/new_playtable_tasks.yaml")
     task_oracle = hydra.utils.instantiate(task_cfg)
@@ -88,7 +88,7 @@ def evaluate_policy(model, env, eval_sr_path, eval_result_path, eval_dir=None, d
     if not debug:
         eval_sequences = tqdm(eval_sequences, position=0, leave=True)
 
-    eval_num_one_time = 100
+    eval_num_one_time = eval_one_time
     sequence_i = 0
     sequence_i_pack = []
     initial_state_pack = []
@@ -166,7 +166,7 @@ def evaluate_sequences(env, model, task_checker, initial_states, eval_sequences,
                 subtask_iterators[i] = iter(eval_sequences[current_sequence_id % len(eval_sequences)])
                 current_sequence_id += 1
                 next_subtask = next(subtask_iterators[i])
-                if current_sequence_id >= len(eval_sequences):
+                if current_sequence_id > len(eval_sequences):
                     finished[i] = True
 
             episode_subtasks[i] = next_subtask
@@ -212,6 +212,7 @@ def main():
     parser.add_argument('--configs_path', type=str, help="Path to the config json file")
     parser.add_argument('--device', default=0, type=int, help="CUDA device")
     parser.add_argument('--parallel', default=2, type=int, help="Environment number for parallel")
+    parser.add_argument('--eval_one_time', '-e', default=100, type=int, help="Evaluation")
     args = parser.parse_args()
 
     if args.configs_path and args.mae_ckpt_path and args.policy_ckpt_path:
@@ -262,6 +263,7 @@ def main():
         eval_sr_path,
         eval_result_path,
         args.eval_dir,
+        eval_one_time=args.eval_one_time,
         debug=args.debug)
 
 
